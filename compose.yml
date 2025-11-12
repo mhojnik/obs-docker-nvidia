@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  obs:
+    build: .
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility,graphics
+      - OBS_USE_EGL=1
+    ports:
+      - "5900:5900"  # VNC
+    devices:
+      - /dev/nvidia0
+      - /dev/nvidiactl
+      - /dev/nvidia-uvm
+      - /dev/nvidia-modeset
+      - /dev/nvidia-uvm-tools
+    privileged: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    shm_size: '1gb'
