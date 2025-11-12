@@ -9,7 +9,11 @@ export DISPLAY=:99
 
 sleep 5
 
-x11vnc -display :99 -nopw -forever -shared &
+if [ -n "$VNC_PASSWORD" ]; then
+    x11vnc -display :99 -passwd "$VNC_PASSWORD" -forever -shared &
+else
+    x11vnc -display :99 -nopw -forever -shared &
+fi
 
 pulseaudio --start
 
