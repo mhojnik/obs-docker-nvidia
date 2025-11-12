@@ -12,7 +12,7 @@ RUN apt-get update &&\
     apt-get install -y --no-install-recommends \
     vlc \
     obs-studio \
-    libsrt1 \
+    libsrt1.4-openssl \
     wget \
     dbus \
     mesa-utils \
