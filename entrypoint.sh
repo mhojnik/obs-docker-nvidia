@@ -36,63 +36,58 @@ check_property() {
     return 0
 }
 
-# Determine encoder (prefer GPU, fallback to CPU)
-# Based on GStreamer docs: nvh264enc has repeat-sequence-header property
-# Per GStreamer docs: repeat-sequence-header=true inserts SPS/PPS before each IDR frame
+# Determine encoder - MUST use GPU encoder (nvh264enc)
+# Based on working examples from GStreamer community and documentation
+# Strategy: Use repeat-sequence-header if available (from main branch), otherwise rely on h264parse
 if check_plugin nvh264enc; then
+    # Base encoder configuration - low-latency-hq preset for good quality with low latency
     ENCODER="nvh264enc bitrate=6000 preset=low-latency-hq"
-    # Check for repeat-sequence-header property (nvh264enc supports this per GStreamer docs)
+    
+    # Check for repeat-sequence-header property (available in main branch)
+    # This is the preferred method as it ensures encoder outputs SPS/PPS before each IDR
     if check_property nvh264enc repeat-sequence-header; then
         ENCODER="$ENCODER repeat-sequence-header=true"
-        echo "nvh264enc: using repeat-sequence-header=true to insert SPS/PPS before each IDR frame"
+        echo "nvh264enc: using repeat-sequence-header=true (encoder will insert SPS/PPS before each IDR)"
     else
-        echo "WARNING: nvh264enc repeat-sequence-header property not found"
-        # Try aud property to ensure Access Unit Delimiters (may help with parameter sets)
-        if check_property nvh264enc aud; then
-            ENCODER="$ENCODER aud=true"
-            echo "nvh264enc: using aud=true to ensure Access Unit Delimiters"
-        fi
-        echo "Note: Relying on h264parse config-interval=-1 to insert SPS/PPS with every IDR frame"
+        echo "nvh264enc: repeat-sequence-header not available (expected if using GStreamer 1.20.3)"
+        echo "Will rely on h264parse config-interval=-1 for SPS/PPS insertion"
     fi
-    # Set keyframe interval (gop-size or keyframe-interval)
+    
+    # Set GOP size for regular keyframes (IDR frames)
+    # This ensures h264parse has regular opportunities to insert SPS/PPS
     if check_property nvh264enc gop-size; then
         ENCODER="$ENCODER gop-size=30"
     elif check_property nvh264enc keyframe-interval; then
         ENCODER="$ENCODER keyframe-interval=30"
     fi
-    echo "Using GPU encoder: nvh264enc with options: $ENCODER"
+    
+    echo "Using GPU encoder: nvh264enc"
+    echo "Encoder configuration: $ENCODER"
 else
-    # x264enc: key-int-max is documented property for keyframe interval
-    ENCODER="x264enc bitrate=6000 speed-preset=ultrafast tune=zerolatency key-int-max=30"
-    echo "Using CPU encoder: x264enc"
+    echo "ERROR: nvh264enc not available - GPU encoding required but not possible"
+    exit 1
 fi
 
-# Determine h264parse options
-# According to GStreamer docs: config-interval=-1 inserts SPS/PPS before every IDR frame
-# There was a bug with config-interval not working for byte-stream format, but it should be fixed in 1.20.x
-# We'll use both config-interval and ensure stream-format is set correctly
-H264PARSE_OPTS=""
+# Determine h264parse options - CRITICAL for SPS/PPS insertion
+# Based on working examples: h264parse config-interval=-1 inserts SPS/PPS before every IDR frame
+# This works even if encoder doesn't have repeat-sequence-header property
+# For mpegtsmux compatibility, we need byte-stream format
+H264PARSE_OPTS="config-interval=-1"
 if check_property h264parse config-interval; then
-    H264PARSE_OPTS="config-interval=-1"
-    echo "h264parse: using config-interval=-1 to insert SPS/PPS with every IDR frame (per GStreamer docs)"
+    echo "h264parse: using config-interval=-1 (inserts SPS/PPS before every IDR frame)"
 else
-    # Fallback: check if property exists with different matching
-    if gst-inspect-1.0 h264parse 2>/dev/null | grep -q "config-interval"; then
-        H264PARSE_OPTS="config-interval=-1"
-        echo "h264parse: using config-interval=-1 (fallback detection)"
-    else
-        echo "WARNING: h264parse config-interval property not found - checking available properties..."
-        gst-inspect-1.0 h264parse 2>/dev/null | grep -E "(config|interval|sps|pps)" | head -5 || true
-    fi
+    echo "WARNING: h264parse config-interval property not found - checking alternatives..."
+    gst-inspect-1.0 h264parse 2>/dev/null | grep -E "(config|interval)" | head -5 || true
+    # Still try to use it - might work even if property check fails
+    H264PARSE_OPTS="config-interval=-1"
 fi
-# Keep byte-stream format for compatibility with mpegtsmux
-# Note: There was a bug with config-interval not working for byte-stream, but it should be fixed in 1.20.x
-# If issues persist, the encoder should output SPS/PPS initially, and h264parse will re-insert them
+# Ensure byte-stream format for mpegtsmux (required for MPEG-TS)
+# This is the standard format used in working examples
 if check_property h264parse output-format; then
     H264PARSE_OPTS="$H264PARSE_OPTS output-format=byte-stream"
-    echo "h264parse: using output-format=byte-stream (required for mpegtsmux compatibility)"
+    echo "h264parse: using output-format=byte-stream (required for mpegtsmux)"
 fi
-echo "h264parse options: ${H264PARSE_OPTS:-none}"
+echo "Final h264parse options: $H264PARSE_OPTS"
 
 # Determine audio encoder (prefer aacenc, fallback to avenc_aac)
 if check_plugin aacenc; then
@@ -132,7 +127,7 @@ run_pipeline() {
                 video/x-raw,width=1920,height=1080 '!' \
                 videoconvert '!' \
                 $ENCODER '!' \
-                h264parse${H264PARSE_OPTS:+ $H264PARSE_OPTS} '!' \
+                h264parse $H264PARSE_OPTS '!' \
                 mpegtsmux name=mux '!' \
                 srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish \
               audiotestsrc wave=silence is-live=true '!' \
@@ -157,7 +152,7 @@ run_pipeline() {
                 video/x-raw,width=1920,height=1080 '!' \
                 videoconvert '!' \
                 $ENCODER '!' \
-                h264parse${H264PARSE_OPTS:+ $H264PARSE_OPTS} '!' \
+                h264parse $H264PARSE_OPTS '!' \
                 mpegtsmux '!' \
                 srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish
         fi
@@ -173,7 +168,7 @@ run_pipeline() {
                 videoconvert '!' \
                 video/x-raw,width=1920,height=1080 '!' \
                 $ENCODER '!' \
-                h264parse${H264PARSE_OPTS:+ $H264PARSE_OPTS} '!' \
+                h264parse $H264PARSE_OPTS '!' \
                 mpegtsmux name=mux '!' \
                 srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish \
               audiotestsrc wave=silence is-live=true '!' \
@@ -190,7 +185,7 @@ run_pipeline() {
                 videoconvert '!' \
                 video/x-raw,width=1920,height=1080 '!' \
                 $ENCODER '!' \
-                h264parse${H264PARSE_OPTS:+ $H264PARSE_OPTS} '!' \
+                h264parse $H264PARSE_OPTS '!' \
                 mpegtsmux '!' \
                 srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish
         fi

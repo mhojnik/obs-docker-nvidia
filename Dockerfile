@@ -68,21 +68,19 @@ RUN apt-get update && apt-get install -y \
 # -----------------------------
 # Build gst-plugins-bad from source with nvcodec support
 # This enables nvh264dec and nvh264enc plugins for hardware acceleration
-# We build ONLY the nvcodec plugin, keeping the rest from Ubuntu packages
+# CRITICAL: Build from main branch to get repeat-sequence-header property for nvh264enc
+# This property is required for proper SPS/PPS insertion with GPU encoder
 # -----------------------------
 RUN git clone https://gitlab.freedesktop.org/gstreamer/gst-plugins-bad.git /tmp/gst-plugins-bad && \
     cd /tmp/gst-plugins-bad && \
-    GST_VERSION=$(pkg-config --modversion gstreamer-1.0) && \
-    echo "GStreamer version: ${GST_VERSION}" && \
-    (git checkout ${GST_VERSION} 2>/dev/null || \
-     git checkout $(git tag | grep "^1\.20\." | sort -V | tail -1) || \
-     git checkout 1.20.3) && \
-    echo "Checked out: $(git describe --tags)" && \
+    echo "Building gst-plugins-bad from main branch for repeat-sequence-header support" && \
+    git checkout main && \
+    echo "Checked out: $(git describe --tags --always)" && \
     meson setup build \
         -Dnvcodec=enabled \
         -Ddefault_library=shared \
         -Dprefix=/usr && \
-    echo "=== Building nvcodec ===" && \
+    echo "=== Building nvcodec plugin from main branch ===" && \
     meson compile -C build 2>&1 | grep -i nvcodec || echo "Build output above" && \
     meson install -C build && \
     ldconfig && \
@@ -128,7 +126,8 @@ RUN gst-launch-1.0 --version && \
     (gst-inspect-1.0 mpegtsmux >/dev/null 2>&1 && echo "✓ mpegtsmux: available" || echo "✗ mpegtsmux: NOT available") && \
     (gst-inspect-1.0 srtsink >/dev/null 2>&1 && echo "✓ srtsink: available" || echo "✗ srtsink: NOT available") && \
     echo "=== Checking nvh264enc properties ===" && \
-    (gst-inspect-1.0 nvh264enc 2>/dev/null | grep -E "(insert-sps-pps|gop-size|bitrate|preset)" | head -10 || echo "nvh264enc not available for property check") && \
+    (gst-inspect-1.0 nvh264enc 2>/dev/null | grep -E "(repeat-sequence-header|insert-sps-pps|gop-size|bitrate|preset)" | head -10 || echo "nvh264enc not available for property check") && \
+    (gst-inspect-1.0 nvh264enc 2>/dev/null | grep -q "repeat-sequence-header" && echo "✓ repeat-sequence-header: AVAILABLE" || echo "✗ repeat-sequence-header: NOT available") && \
     echo "=== Checking h264parse properties ===" && \
     (gst-inspect-1.0 h264parse 2>/dev/null | grep -E "(config-interval|output-stream-format|insert-vui)" | head -10 || echo "h264parse not available for property check") && \
     echo "=== Plugin availability check complete ==="
