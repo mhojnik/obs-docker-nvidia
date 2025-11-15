@@ -174,8 +174,10 @@ RUN chmod +x /app/entrypoint.sh /app/gst_pipeline.py
 # -----------------------------
 # Health check
 # -----------------------------
+# Check if Python pipeline process is running
+# The pipeline handles SRT connection errors gracefully during rolling updates
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD pgrep -f "gst-launch-1.0" > /dev/null || exit 1
+    CMD pgrep -f "gst_pipeline.py" > /dev/null || exit 1
 
 # -----------------------------
 # Default command
