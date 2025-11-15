@@ -68,23 +68,31 @@ RUN apt-get update && apt-get install -y \
 # -----------------------------
 # Build gst-plugins-bad from source with nvcodec support
 # This enables nvh264dec and nvh264enc plugins for hardware acceleration
-# CRITICAL: Build from main branch to get repeat-sequence-header property for nvh264enc
-# This property is required for proper SPS/PPS insertion with GPU encoder
+# IMPORTANT: Use Ubuntu source package to match GStreamer 1.20.3 version
+# This ensures compatibility between GStreamer core and plugins
+# We rely on h264parse config-interval=-1 for SPS/PPS insertion
 # -----------------------------
-RUN git clone https://gitlab.freedesktop.org/gstreamer/gst-plugins-bad.git /tmp/gst-plugins-bad && \
-    cd /tmp/gst-plugins-bad && \
-    echo "Building gst-plugins-bad from main branch for repeat-sequence-header support" && \
-    git checkout main && \
-    echo "Checked out: $(git describe --tags --always)" && \
+RUN echo "deb-src http://archive.ubuntu.com/ubuntu/ jammy main restricted universe multiverse" >> /etc/apt/sources.list && \
+    echo "deb-src http://archive.ubuntu.com/ubuntu/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
+    apt-get update && apt-get install -y devscripts debhelper && \
+    mkdir -p /tmp/gst-plugins-bad-source && \
+    cd /tmp/gst-plugins-bad-source && \
+    apt-get source gstreamer1.0-plugins-bad && \
+    cd gstreamer1.0-plugins-bad-* && \
+    echo "Building nvcodec plugin from Ubuntu source (version: $(dpkg-parsechangelog -S Version))" && \
     meson setup build \
         -Dnvcodec=enabled \
         -Ddefault_library=shared \
         -Dprefix=/usr && \
-    echo "=== Building nvcodec plugin from main branch ===" && \
+    echo "=== Building nvcodec plugin ===" && \
     meson compile -C build 2>&1 | grep -i nvcodec || echo "Build output above" && \
     meson install -C build && \
     ldconfig && \
-    rm -rf /tmp/gst-plugins-bad
+    cd / && \
+    rm -rf /tmp/gst-plugins-bad-source && \
+    apt-get purge -y devscripts debhelper && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
 
 # Rebuild GStreamer registry to ensure all plugins are recognized
 # Force a complete registry rebuild
