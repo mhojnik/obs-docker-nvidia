@@ -127,6 +127,10 @@ RUN gst-launch-1.0 --version && \
     (gst-inspect-1.0 videoconvert >/dev/null 2>&1 && echo "✓ videoconvert: available" || echo "✗ videoconvert: NOT available") && \
     (gst-inspect-1.0 mpegtsmux >/dev/null 2>&1 && echo "✓ mpegtsmux: available" || echo "✗ mpegtsmux: NOT available") && \
     (gst-inspect-1.0 srtsink >/dev/null 2>&1 && echo "✓ srtsink: available" || echo "✗ srtsink: NOT available") && \
+    echo "=== Checking nvh264enc properties ===" && \
+    (gst-inspect-1.0 nvh264enc 2>/dev/null | grep -E "(insert-sps-pps|gop-size|bitrate|preset)" | head -10 || echo "nvh264enc not available for property check") && \
+    echo "=== Checking h264parse properties ===" && \
+    (gst-inspect-1.0 h264parse 2>/dev/null | grep -E "(config-interval|output-stream-format|insert-vui)" | head -10 || echo "h264parse not available for property check") && \
     echo "=== Plugin availability check complete ==="
 
 # -----------------------------

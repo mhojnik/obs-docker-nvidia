@@ -26,13 +26,45 @@ else
     echo "Using CPU decoder: avdec_h264"
 fi
 
+# Check if a property exists for an element
+check_property() {
+    local element=$1
+    local property=$2
+    gst-inspect-1.0 "$element" 2>/dev/null | grep -q "^\s*$property:" || return 1
+    return 0
+}
+
 # Determine encoder (prefer GPU, fallback to CPU)
+# Based on GStreamer docs: nvh264enc has bitrate, preset, bframes, cabac, aud, etc.
+# gop-size may not be available - check at runtime
 if check_plugin nvh264enc; then
-    ENCODER="nvh264enc bitrate=6000 preset=low-latency-hq gop-size=30"
+    ENCODER="nvh264enc bitrate=6000 preset=low-latency-hq"
+    if check_property nvh264enc gop-size; then
+        ENCODER="$ENCODER gop-size=30"
+    elif check_property nvh264enc keyframe-interval; then
+        ENCODER="$ENCODER keyframe-interval=30"
+    fi
     echo "Using GPU encoder: nvh264enc"
 else
+    # x264enc: key-int-max is documented property for keyframe interval
     ENCODER="x264enc bitrate=6000 speed-preset=ultrafast tune=zerolatency key-int-max=30"
     echo "Using CPU encoder: x264enc"
+fi
+
+# Determine h264parse options
+# Based on GStreamer docs: config-interval=-1 sends SPS/PPS with every IDR frame
+# output-format can be byte-stream or avc (not output-stream-format)
+H264PARSE_OPTS=""
+if check_property h264parse config-interval; then
+    H264PARSE_OPTS="config-interval=-1"
+fi
+if check_property h264parse output-format; then
+    H264PARSE_OPTS="$H264PARSE_OPTS output-format=byte-stream"
+fi
+if [ -n "$H264PARSE_OPTS" ]; then
+    echo "h264parse options: $H264PARSE_OPTS"
+else
+    echo "h264parse: using default options"
 fi
 
 # Determine audio encoder (prefer aacenc, fallback to avenc_aac)
@@ -73,7 +105,7 @@ run_pipeline() {
                 video/x-raw,width=1920,height=1080 '!' \
                 videoconvert '!' \
                 $ENCODER '!' \
-                h264parse config-interval=-1 '!' \
+                h264parse${H264PARSE_OPTS:+ $H264PARSE_OPTS} '!' \
                 mpegtsmux name=mux '!' \
                 srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish \
               audiotestsrc wave=silence is-live=true '!' \
@@ -98,7 +130,7 @@ run_pipeline() {
                 video/x-raw,width=1920,height=1080 '!' \
                 videoconvert '!' \
                 $ENCODER '!' \
-                h264parse config-interval=-1 '!' \
+                h264parse${H264PARSE_OPTS:+ $H264PARSE_OPTS} '!' \
                 mpegtsmux '!' \
                 srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish
         fi
@@ -114,7 +146,7 @@ run_pipeline() {
                 videoconvert '!' \
                 video/x-raw,width=1920,height=1080 '!' \
                 $ENCODER '!' \
-                h264parse config-interval=-1 '!' \
+                h264parse${H264PARSE_OPTS:+ $H264PARSE_OPTS} '!' \
                 mpegtsmux name=mux '!' \
                 srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish \
               audiotestsrc wave=silence is-live=true '!' \
@@ -131,7 +163,7 @@ run_pipeline() {
                 videoconvert '!' \
                 video/x-raw,width=1920,height=1080 '!' \
                 $ENCODER '!' \
-                h264parse config-interval=-1 '!' \
+                h264parse${H264PARSE_OPTS:+ $H264PARSE_OPTS} '!' \
                 mpegtsmux '!' \
                 srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish
         fi
