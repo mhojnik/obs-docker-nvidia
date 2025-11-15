@@ -78,7 +78,7 @@ RUN echo "deb-src http://archive.ubuntu.com/ubuntu/ jammy main restricted univer
     mkdir -p /tmp/gst-plugins-bad-source && \
     cd /tmp/gst-plugins-bad-source && \
     apt-get source gstreamer1.0-plugins-bad && \
-    cd gstreamer1.0-plugins-bad-* && \
+    cd gst-plugins-bad1.0-* && \
     echo "Building nvcodec plugin from Ubuntu source (version: $(dpkg-parsechangelog -S Version))" && \
     meson setup build \
         -Dnvcodec=enabled \
