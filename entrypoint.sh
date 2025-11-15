@@ -46,8 +46,13 @@ if check_plugin nvh264enc; then
         ENCODER="$ENCODER repeat-sequence-header=true"
         echo "nvh264enc: using repeat-sequence-header=true to insert SPS/PPS before each IDR frame"
     else
-        echo "WARNING: nvh264enc repeat-sequence-header property not found - checking available properties..."
-        gst-inspect-1.0 nvh264enc 2>/dev/null | grep -E "(repeat|sequence|header|sps|pps)" | head -5 || true
+        echo "WARNING: nvh264enc repeat-sequence-header property not found"
+        # Try aud property to ensure Access Unit Delimiters (may help with parameter sets)
+        if check_property nvh264enc aud; then
+            ENCODER="$ENCODER aud=true"
+            echo "nvh264enc: using aud=true to ensure Access Unit Delimiters"
+        fi
+        echo "Note: Relying on h264parse config-interval=-1 to insert SPS/PPS with every IDR frame"
     fi
     # Set keyframe interval (gop-size or keyframe-interval)
     if check_property nvh264enc gop-size; then
@@ -64,7 +69,8 @@ fi
 
 # Determine h264parse options
 # According to GStreamer docs: config-interval=-1 inserts SPS/PPS before every IDR frame
-# config-interval=0 DISABLES insertion (default), so we must use -1
+# There was a bug with config-interval not working for byte-stream format, but it should be fixed in 1.20.x
+# We'll use both config-interval and ensure stream-format is set correctly
 H264PARSE_OPTS=""
 if check_property h264parse config-interval; then
     H264PARSE_OPTS="config-interval=-1"
@@ -79,9 +85,12 @@ else
         gst-inspect-1.0 h264parse 2>/dev/null | grep -E "(config|interval|sps|pps)" | head -5 || true
     fi
 fi
-# Ensure byte-stream format for compatibility
+# Keep byte-stream format for compatibility with mpegtsmux
+# Note: There was a bug with config-interval not working for byte-stream, but it should be fixed in 1.20.x
+# If issues persist, the encoder should output SPS/PPS initially, and h264parse will re-insert them
 if check_property h264parse output-format; then
     H264PARSE_OPTS="$H264PARSE_OPTS output-format=byte-stream"
+    echo "h264parse: using output-format=byte-stream (required for mpegtsmux compatibility)"
 fi
 echo "h264parse options: ${H264PARSE_OPTS:-none}"
 
