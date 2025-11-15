@@ -16,6 +16,11 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     libx264-dev \
     libx265-dev \
+    python3 \
+    python3-gi \
+    python3-gi-cairo \
+    gir1.2-gstreamer-1.0 \
+    gir1.2-gst-plugins-base-1.0 \
     && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------
@@ -160,10 +165,11 @@ ENV PULSE_RUNTIME_PATH=/tmp
 WORKDIR /app
 
 # -----------------------------
-# Copy pipeline script
+# Copy pipeline scripts
 # -----------------------------
 COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+COPY gst_pipeline.py /app/gst_pipeline.py
+RUN chmod +x /app/entrypoint.sh /app/gst_pipeline.py
 
 # -----------------------------
 # Health check

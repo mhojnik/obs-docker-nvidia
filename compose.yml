@@ -1,7 +1,7 @@
 version: "3.9"
 
 services:
-  obs:
+  gstreamer:
     build: .
     runtime: nvidia
     environment:
@@ -22,3 +22,8 @@ services:
           devices:
             - capabilities: [gpu]
     shm_size: '1gb'
+    volumes:
+      # Mount scripts for development - changes take effect without rebuild
+      # Comment out these volumes for production to use the built-in scripts
+      - ./gst_pipeline.py:/app/gst_pipeline.py:ro
+      - ./entrypoint.sh:/app/entrypoint.sh:ro
