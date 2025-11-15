@@ -37,14 +37,14 @@ check_property() {
 }
 
 # Determine encoder (prefer GPU, fallback to CPU)
-# Based on GStreamer docs: nvh264enc has bitrate, preset, bframes, cabac, aud, etc.
-# NVIDIA encoders may have insert-sps-pps property to force parameter set insertion
+# Based on GStreamer docs: nvh264enc has repeat-sequence-header property
+# Per GStreamer docs: repeat-sequence-header=true inserts SPS/PPS before each IDR frame
 if check_plugin nvh264enc; then
     ENCODER="nvh264enc bitrate=6000 preset=low-latency-hq"
-    # Check for insert-sps-pps property (NVIDIA encoders support this)
-    if check_property nvh264enc insert-sps-pps; then
-        ENCODER="$ENCODER insert-sps-pps=1"
-        echo "nvh264enc: using insert-sps-pps=1 to force SPS/PPS insertion"
+    # Check for repeat-sequence-header property (nvh264enc supports this per GStreamer docs)
+    if check_property nvh264enc repeat-sequence-header; then
+        ENCODER="$ENCODER repeat-sequence-header=true"
+        echo "nvh264enc: using repeat-sequence-header=true to insert SPS/PPS before each IDR frame"
     fi
     # Set keyframe interval (gop-size or keyframe-interval)
     if check_property nvh264enc gop-size; then
