@@ -130,7 +130,7 @@ RUN gst-launch-1.0 --version && \
     echo "=== Plugin availability check complete ==="
 
 # -----------------------------
-# Set environment variables for GPU acceleration
+# Set environment variables for GPU acceleration and stability
 # -----------------------------
 # Enable WebKitGTK GPU acceleration (WebKitGTK 2.46+ uses GPU by default)
 ENV WEBKIT_DISABLE_COMPOSITING_MODE=0
@@ -138,6 +138,10 @@ ENV WEBKIT_ENABLE_GPU_PROCESS=1
 # Enable GStreamer GL/GPU features
 ENV GST_GL_PLATFORM=egl
 ENV GST_GL_API=gles2
+# Suppress warnings and improve stability
+ENV GST_DEBUG_NO_COLOR=1
+ENV XDG_RUNTIME_DIR=/tmp
+ENV PULSE_RUNTIME_PATH=/tmp
 
 # -----------------------------
 # Create working directory

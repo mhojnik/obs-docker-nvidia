@@ -1,5 +1,6 @@
 #!/bin/bash
-set -e
+# Don't exit on errors - we want to retry on connection failures
+set +e
 
 # Disable history expansion to allow ! in GStreamer pipeline
 set +H
@@ -34,37 +35,67 @@ else
     echo "Using CPU encoder: x264enc"
 fi
 
-# Build and execute pipeline - check if wpesrc is available (wpe plugin provides wpesrc/wpevideosrc, not webkitwebsrc)
-if check_plugin wpesrc; then
-    echo "Using wpesrc for HTML overlay"
-    # Pipeline with webkit overlay
-    gst-launch-1.0 -v \
-      srtsrc uri=srt://172.18.0.4:6000/?mode=caller\&transtype=live\&streamid=a6128a3a-69cb-4da2-a654-1e5f7de4477f,mode:request '!' \
-        tsdemux '!' h264parse '!' \
-        $DECODER '!' \
-        videoconvert '!' \
-        video/x-raw,format=BGRA,width=1920,height=1080 '!' \
-        queue '!' comp.sink_0 \
-      wpesrc location=https://index.hr '!' \
-        video/x-raw,format=BGRA,width=1280,height=720,framerate=30/1 '!' \
-        queue '!' comp.sink_1 \
-      compositor name=comp sink_0::zorder=0 sink_1::zorder=1 \
-        background=black '!' \
-        video/x-raw,width=1920,height=1080 '!' \
-        videoconvert '!' \
-        $ENCODER '!' \
-        h264parse '!' mpegtsmux '!' \
-        srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish
-else
-    echo "webkitwebsrc not available - skipping HTML overlay, using SRT pass-through"
-    # Pipeline without webkit overlay (just pass through SRT stream)
-    gst-launch-1.0 -v \
-      srtsrc uri=srt://172.18.0.4:6000/?mode=caller\&transtype=live\&streamid=a6128a3a-69cb-4da2-a654-1e5f7de4477f,mode:request '!' \
-        tsdemux '!' h264parse '!' \
-        $DECODER '!' \
-        videoconvert '!' \
-        video/x-raw,width=1920,height=1080 '!' \
-        $ENCODER '!' \
-        h264parse '!' mpegtsmux '!' \
-        srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish
-fi
+# Build and execute pipeline with retry logic for connection failures
+# Retry up to 5 times with exponential backoff
+MAX_RETRIES=5
+RETRY_DELAY=2
+
+run_pipeline() {
+    if check_plugin wpesrc; then
+        echo "Using wpesrc for HTML overlay"
+        # Pipeline with webkit overlay
+        gst-launch-1.0 -v \
+          srtsrc uri=srt://172.18.0.4:6000/?mode=caller\&transtype=live\&streamid=a6128a3a-69cb-4da2-a654-1e5f7de4477f,mode:request '!' \
+            tsdemux '!' h264parse '!' \
+            $DECODER '!' \
+            videoconvert '!' \
+            video/x-raw,format=BGRA,width=1920,height=1080 '!' \
+            queue '!' comp.sink_0 \
+          wpesrc location=https://index.hr '!' \
+            video/x-raw,format=BGRA,width=1280,height=720,framerate=30/1 '!' \
+            queue '!' comp.sink_1 \
+          compositor name=comp sink_0::zorder=0 sink_1::zorder=1 \
+            background=black '!' \
+            video/x-raw,width=1920,height=1080 '!' \
+            videoconvert '!' \
+            $ENCODER '!' \
+            h264parse '!' mpegtsmux '!' \
+            srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish
+    else
+        echo "wpesrc not available - skipping HTML overlay, using SRT pass-through"
+        # Pipeline without webkit overlay (just pass through SRT stream)
+        gst-launch-1.0 -v \
+          srtsrc uri=srt://172.18.0.4:6000/?mode=caller\&transtype=live\&streamid=a6128a3a-69cb-4da2-a654-1e5f7de4477f,mode:request '!' \
+            tsdemux '!' h264parse '!' \
+            $DECODER '!' \
+            videoconvert '!' \
+            video/x-raw,width=1920,height=1080 '!' \
+            $ENCODER '!' \
+            h264parse '!' mpegtsmux '!' \
+            srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish
+    fi
+}
+
+# Run pipeline with retry logic
+RETRY_COUNT=0
+CURRENT_DELAY=$RETRY_DELAY
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    if [ $RETRY_COUNT -gt 0 ]; then
+        echo "Pipeline failed, retrying in ${CURRENT_DELAY}s (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)..."
+        sleep $CURRENT_DELAY
+        CURRENT_DELAY=$((CURRENT_DELAY * 2))  # Exponential backoff
+    fi
+    
+    run_pipeline
+    EXIT_CODE=$?
+    
+    # If pipeline exits with 0 or 130 (interrupted), exit normally
+    if [ $EXIT_CODE -eq 0 ] || [ $EXIT_CODE -eq 130 ]; then
+        exit $EXIT_CODE
+    fi
+    
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+done
+
+echo "Pipeline failed after $MAX_RETRIES attempts, exiting"
+exit 1
