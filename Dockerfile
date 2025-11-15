@@ -69,7 +69,6 @@ RUN apt-get update && apt-get install -y \
 # Build gst-plugins-bad from source with nvcodec support
 # This enables nvh264dec and nvh264enc plugins for hardware acceleration
 # We build ONLY the nvcodec plugin, keeping the rest from Ubuntu packages
-# Use -Dauto_features=disabled to only build nvcodec, then enable it
 # -----------------------------
 RUN git clone https://gitlab.freedesktop.org/gstreamer/gst-plugins-bad.git /tmp/gst-plugins-bad && \
     cd /tmp/gst-plugins-bad && \
@@ -77,7 +76,6 @@ RUN git clone https://gitlab.freedesktop.org/gstreamer/gst-plugins-bad.git /tmp/
     (git checkout ${GST_VERSION} 2>/dev/null || \
      git checkout $(git tag | grep "^1\.20\." | sort -V | tail -1)) && \
     meson setup build \
-        -Dauto_features=disabled \
         -Dnvcodec=enabled \
         -Ddefault_library=shared \
         -Dprefix=/usr && \
@@ -116,7 +114,7 @@ RUN gst-launch-1.0 --version && \
     (gst-inspect-1.0 nvh264dec >/dev/null 2>&1 && echo "✓ nvh264dec: available (GPU decoder)" || echo "✗ nvh264dec: NOT available") && \
     (gst-inspect-1.0 nvh264enc >/dev/null 2>&1 && echo "✓ nvh264enc: available (GPU encoder)" || echo "✗ nvh264enc: NOT available") && \
     (gst-inspect-1.0 x264enc >/dev/null 2>&1 && echo "✓ x264enc: available (software encoder fallback)" || echo "✗ x264enc: NOT available") && \
-    (gst-inspect-1.0 webkitwebsrc >/dev/null 2>&1 && echo "✓ webkitwebsrc: available" || echo "✗ webkitwebsrc: NOT available") && \
+    (gst-inspect-1.0 wpesrc >/dev/null 2>&1 && echo "✓ wpesrc: available" || echo "✗ wpesrc: NOT available") && \
     (gst-inspect-1.0 compositor >/dev/null 2>&1 && echo "✓ compositor: available" || echo "✗ compositor: NOT available") && \
     (gst-inspect-1.0 videoconvert >/dev/null 2>&1 && echo "✓ videoconvert: available" || echo "✗ videoconvert: NOT available") && \
     (gst-inspect-1.0 mpegtsmux >/dev/null 2>&1 && echo "✓ mpegtsmux: available" || echo "✗ mpegtsmux: NOT available") && \

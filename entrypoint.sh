@@ -34,9 +34,9 @@ else
     echo "Using CPU encoder: x264enc"
 fi
 
-# Build and execute pipeline - check if webkitwebsrc is available
-if check_plugin webkitwebsrc; then
-    echo "Using webkitwebsrc for HTML overlay"
+# Build and execute pipeline - check if wpesrc is available (wpe plugin provides wpesrc/wpevideosrc, not webkitwebsrc)
+if check_plugin wpesrc; then
+    echo "Using wpesrc for HTML overlay"
     # Pipeline with webkit overlay
     gst-launch-1.0 -v \
       srtsrc uri=srt://172.18.0.4:6000/?mode=caller\&transtype=live\&streamid=a6128a3a-69cb-4da2-a654-1e5f7de4477f,mode:request '!' \
@@ -45,7 +45,7 @@ if check_plugin webkitwebsrc; then
         videoconvert '!' \
         video/x-raw,format=BGRA,width=1920,height=1080 '!' \
         queue '!' comp.sink_0 \
-      webkitwebsrc location=https://index.hr '!' \
+      wpesrc location=https://index.hr '!' \
         video/x-raw,format=BGRA,width=1280,height=720,framerate=30/1 '!' \
         queue '!' comp.sink_1 \
       compositor name=comp sink_0::zorder=0 sink_1::zorder=1 \
