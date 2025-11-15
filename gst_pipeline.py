@@ -92,7 +92,8 @@ def build_pipeline():
         test_pattern_caps_filter.link(test_pattern_queue)
         
         # Connect test pattern source to selector (as fallback source)
-        test_pattern_pad = selector.get_request_pad("sink_test_pattern")
+        # Use request_pad_simple with template - input-selector uses sink_%u pattern
+        test_pattern_pad = selector.request_pad_simple("sink_%u")
         if test_pattern_pad:
             test_pattern_queue.get_static_pad("src").link(test_pattern_pad)
             print("TV test pattern (SMPTE color bars) source added as fallback")
@@ -145,20 +146,48 @@ def build_pipeline():
         if not decoder.link(videoconvert):
             print(f"ERROR: Failed to link decoder to videoconvert for source {i}")
             return None
-        if not videoconvert.link(queue):
-            print(f"ERROR: Failed to link videoconvert to queue for source {i}")
-            return None
+        # Add caps filter after videoconvert to ensure proper format
+        source_caps = Gst.ElementFactory.make("capsfilter", f"source_caps_{i}")
+        if source_caps:
+            caps = Gst.Caps.from_string("video/x-raw,width=1920,height=1080,framerate=30/1")
+            source_caps.set_property("caps", caps)
+            pipeline.add(source_caps)
+            if not videoconvert.link(source_caps):
+                print(f"ERROR: Failed to link videoconvert to caps filter for source {i}")
+                return None
+            if not source_caps.link(queue):
+                print(f"ERROR: Failed to link caps filter to queue for source {i}")
+                return None
+        else:
+            if not videoconvert.link(queue):
+                print(f"ERROR: Failed to link videoconvert to queue for source {i}")
+                return None
+        
+        # Get queue output pad for linking to selector
+        queue_output = queue.get_static_pad("src")
         
         # Get selector sink pad and link queue to it
-        sink_pad = selector.get_request_pad(f"sink_{i}")
+        # Use request_pad_simple with template - input-selector uses sink_%u pattern
+        sink_pad = selector.request_pad_simple("sink_%u")
         if not sink_pad:
-            print(f"ERROR: Failed to get sink pad {i} from input-selector")
+            print(f"ERROR: Failed to request sink pad {i} from input-selector")
             return None
         
-        queue_src = queue.get_static_pad("src")
-        if queue_src and sink_pad:
-            if not queue_src.link(sink_pad):
-                print(f"ERROR: Failed to link queue to selector sink pad {i}")
+        if queue_output and sink_pad:
+            link_ret = queue_output.link(sink_pad)
+            if link_ret != Gst.PadLinkReturn.OK:
+                print(f"ERROR: Failed to link queue to selector sink pad {i}: {link_ret}")
+                # Try to get more details about the failure
+                if link_ret == Gst.PadLinkReturn.WRONG_HIERARCHY:
+                    print("  Reason: Wrong hierarchy")
+                elif link_ret == Gst.PadLinkReturn.WAS_LINKED:
+                    print("  Reason: Pad was already linked")
+                elif link_ret == Gst.PadLinkReturn.WRONG_DIRECTION:
+                    print("  Reason: Wrong direction")
+                elif link_ret == Gst.PadLinkReturn.NO_FORMAT:
+                    print("  Reason: No format")
+                elif link_ret == Gst.PadLinkReturn.REFUSED:
+                    print("  Reason: Link refused")
                 return None
         
         source_elements.append({
