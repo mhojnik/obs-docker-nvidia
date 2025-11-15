@@ -30,7 +30,9 @@ fi
 check_property() {
     local element=$1
     local property=$2
-    gst-inspect-1.0 "$element" 2>/dev/null | grep -q "^\s*$property:" || return 1
+    # gst-inspect outputs properties with format: "  property-name     : Description"
+    # Match property name followed by whitespace and colon
+    gst-inspect-1.0 "$element" 2>/dev/null | grep -qE "^\s+$property\s+:" || return 1
     return 0
 }
 
@@ -57,14 +59,18 @@ fi
 H264PARSE_OPTS=""
 if check_property h264parse config-interval; then
     H264PARSE_OPTS="config-interval=-1"
+    echo "h264parse: using config-interval=-1 to insert SPS/PPS with every IDR frame"
+else
+    # Fallback: check if property exists with different matching
+    if gst-inspect-1.0 h264parse 2>/dev/null | grep -q "config-interval"; then
+        H264PARSE_OPTS="config-interval=-1"
+        echo "h264parse: using config-interval=-1 (fallback detection)"
+    else
+        echo "WARNING: h264parse config-interval property not found - SPS/PPS may not be inserted"
+    fi
 fi
 if check_property h264parse output-format; then
     H264PARSE_OPTS="$H264PARSE_OPTS output-format=byte-stream"
-fi
-if [ -n "$H264PARSE_OPTS" ]; then
-    echo "h264parse options: $H264PARSE_OPTS"
-else
-    echo "h264parse: using default options"
 fi
 
 # Determine audio encoder (prefer aacenc, fallback to avenc_aac)
