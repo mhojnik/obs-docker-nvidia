@@ -1,48 +1,83 @@
 FROM nvidia/cuda:13.0.2-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV TZ=Europe/Ljubljana
 
-# RUN sed -i 's/security.ubuntu.com/mirrors.ustc.edu.cn/g' /etc/apt/sources.list
-# RUN sed -i 's/archive.ubuntu.com/mirrors.ustc.edu.cn/g' /etc/apt/sources.list
-
-RUN apt-get update &&\
-    apt-get install -y software-properties-common curl gnupg && \
-    add-apt-repository ppa:obsproject/obs-studio -y && \
-    apt-get install -y --no-install-recommends \
-    vlc \
-    obs-studio \
-    libsrt1.4-openssl \
+# -----------------------------
+# Install Base Dependencies
+# -----------------------------
+RUN apt-get update && apt-get install -y \
+    software-properties-common \
     wget \
-    dbus \
-    mesa-utils \
-    x11-xserver-utils \
-    xserver-xorg-video-dummy \
-    xserver-xorg-core \
-    xinit \
-    libgl1-mesa-glx \
-    libgl1-mesa-dri \
-    libnvidia-egl-wayland1 \
-    obs-studio \
-    pulseaudio \
-    dbus-x11 \
-    x11vnc \
+    git \
+    curl \
     ca-certificates \
+    ffmpeg \
+    libssl-dev \
+    libglib2.0-0 \
+    libx264-dev \
+    libx265-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /etc/X11/xorg.conf.d
-RUN echo 'Section "Device"\n    Identifier "DummyDevice"\n    Driver "dummy"\n    VideoRam 256000\nEndSection\n\nSection "Monitor"\n    Identifier "DummyMonitor"\n    HorizSync 28.0-80.0\n    VertRefresh 48.0-75.0\nEndSection\n\nSection "Screen"\n    Identifier "DummyScreen"\n    Device "DummyDevice"\n    Monitor "DummyMonitor"\n    DefaultDepth 24\n    SubSection "Display"\n        Depth 24\n        Modes "1920x1080"\n    EndSubSection\nEndSection\n' > /etc/X11/xorg.conf.d/10-dummy.conf
+# -----------------------------
+# Install GStreamer + Plugins (Latest Version)
+# -----------------------------
+# Add GStreamer PPA for latest stable releases
+RUN add-apt-repository -y ppa:gstreamer-developers/ppa && \
+    apt-get update && apt-get install -y \
+    gstreamer1.0-tools \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-libav \
+    gstreamer1.0-nice \
+    gstreamer1.0-gl \
+    gstreamer1.0-x \
+    libgstrtspserver-1.0-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-ENV NVIDIA_VISIBLE_DEVICES=all
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility,graphics
-ENV OBS_USE_EGL=1
+# Verify GStreamer version (should be 1.26.x or later)
+RUN gst-launch-1.0 --version && \
+    echo "GStreamer version check complete"
 
-RUN useradd -m obsuser
+# -----------------------------
+# Install WebKitGTK (for HTML overlay)
+# This provides webkitwebsrc
+# WebKitGTK 2.46+ uses Skia and GPU acceleration by default
+# -----------------------------
+RUN apt-get update && apt-get install -y \
+    libwebkit2gtk-4.0-37 \
+    libwebkit2gtk-4.0-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY entrypoint.sh /home/obsuser/entrypoint.sh
-RUN chmod +x /home/obsuser/entrypoint.sh \
-    && chown obsuser:obsuser /home/obsuser/entrypoint.sh
+# -----------------------------
+# Set environment variables for GPU acceleration
+# -----------------------------
+# Enable WebKitGTK GPU acceleration (WebKitGTK 2.46+ uses GPU by default)
+ENV WEBKIT_DISABLE_COMPOSITING_MODE=0
+ENV WEBKIT_ENABLE_GPU_PROCESS=1
+# Enable GStreamer GL/GPU features
+ENV GST_GL_PLATFORM=egl
+ENV GST_GL_API=gles2
 
-WORKDIR /home/obsuser
+# -----------------------------
+# Create working directory
+# -----------------------------
+WORKDIR /app
 
-ENTRYPOINT ["/home/obsuser/entrypoint.sh"]
+# -----------------------------
+# Copy pipeline script
+# -----------------------------
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# -----------------------------
+# Health check
+# -----------------------------
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD pgrep -f "gst-launch-1.0" > /dev/null || exit 1
+
+# -----------------------------
+# Default command
+# -----------------------------
+CMD ["/app/entrypoint.sh"]
