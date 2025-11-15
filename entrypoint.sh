@@ -85,38 +85,88 @@ switch_to_next_source() {
 
 run_pipeline() {
     local current_src=$(get_current_source)
-    # Common video source chain
-    local video_chain="srtsrc uri=${current_src} '!' tsdemux '!' h264parse '!' ${DECODER} '!' videoconvert"
     
-    # Build video encoding chain based on overlay availability
-    local video_encode_chain
+    # Build pipeline directly - avoid string concatenation issues
     if [ "$USE_HTML_OVERLAY" = true ]; then
-        # With HTML overlay: video -> compositor sink_0, HTML -> compositor sink_1, compositor -> encode
-        local video_branch="${video_chain} '!' video/x-raw,format=BGRA,width=1920,height=1080 '!' queue '!' comp.sink_0"
-        local html_branch="wpesrc location=https://index.hr '!' video/x-raw,format=BGRA,width=1280,height=720,framerate=30/1 '!' queue '!' comp.sink_1"
-        local comp_chain="compositor name=comp sink_0::zorder=0 sink_1::zorder=1 background=black '!' video/x-raw,width=1920,height=1080 '!' videoconvert '!' ${ENCODER} '!' h264parse ${H264PARSE_OPTS}"
-        video_encode_chain="${video_branch} ${html_branch} ${comp_chain}"
+        # Pipeline with HTML overlay
+        if [ -n "$AUDIO_ENCODER" ]; then
+            # With HTML overlay + audio
+            gst-launch-1.0 -v \
+              srtsrc uri="${current_src}" '!' \
+                tsdemux '!' h264parse '!' \
+                ${DECODER} '!' \
+                videoconvert '!' \
+                video/x-raw,format=BGRA,width=1920,height=1080 '!' \
+                queue '!' comp.sink_0 \
+              wpesrc location=https://index.hr '!' \
+                video/x-raw,format=BGRA,width=1280,height=720,framerate=30/1 '!' \
+                queue '!' comp.sink_1 \
+              compositor name=comp sink_0::zorder=0 sink_1::zorder=1 \
+                background=black '!' \
+                video/x-raw,width=1920,height=1080 '!' \
+                videoconvert '!' \
+                ${ENCODER} '!' \
+                h264parse ${H264PARSE_OPTS} '!' \
+                mpegtsmux name=mux '!' \
+                srtsink uri="${SRT_SINK_URI}" \
+              audiotestsrc wave=silence is-live=true '!' \
+                audio/x-raw,rate=48000,channels=2 '!' \
+                audioconvert '!' \
+                ${AUDIO_ENCODER} '!' \
+                mux.
+        else
+            # With HTML overlay, no audio
+            gst-launch-1.0 -v \
+              srtsrc uri="${current_src}" '!' \
+                tsdemux '!' h264parse '!' \
+                ${DECODER} '!' \
+                videoconvert '!' \
+                video/x-raw,format=BGRA,width=1920,height=1080 '!' \
+                queue '!' comp.sink_0 \
+              wpesrc location=https://index.hr '!' \
+                video/x-raw,format=BGRA,width=1280,height=720,framerate=30/1 '!' \
+                queue '!' comp.sink_1 \
+              compositor name=comp sink_0::zorder=0 sink_1::zorder=1 \
+                background=black '!' \
+                video/x-raw,width=1920,height=1080 '!' \
+                videoconvert '!' \
+                ${ENCODER} '!' \
+                h264parse ${H264PARSE_OPTS} '!' \
+                mpegtsmux '!' \
+                srtsink uri="${SRT_SINK_URI}"
+        fi
     else
-        # Without HTML overlay: video -> encode directly
-        video_encode_chain="${video_chain} '!' video/x-raw,width=1920,height=1080 '!' ${ENCODER} '!' h264parse ${H264PARSE_OPTS}"
-    fi
-    
-    # Build final pipeline based on audio availability
-    if [ -n "$AUDIO_ENCODER" ]; then
-        # With audio: video chain -> mux, audio -> mux, mux -> sink
-        gst-launch-1.0 -v ${video_encode_chain} '!' \
-            mpegtsmux name=mux '!' \
-            srtsink uri=${SRT_SINK_URI} \
-            audiotestsrc wave=silence is-live=true '!' \
-            audio/x-raw,rate=48000,channels=2 '!' \
-            audioconvert '!' \
-            ${AUDIO_ENCODER} '!' \
-            mux.
-    else
-        # Without audio: video chain -> mux -> sink
-        gst-launch-1.0 -v ${video_encode_chain} '!' \
-            mpegtsmux '!' \
-            srtsink uri=${SRT_SINK_URI}
+        # Pipeline without HTML overlay
+        if [ -n "$AUDIO_ENCODER" ]; then
+            # No HTML overlay + audio
+            gst-launch-1.0 -v \
+              srtsrc uri="${current_src}" '!' \
+                tsdemux '!' h264parse '!' \
+                ${DECODER} '!' \
+                videoconvert '!' \
+                video/x-raw,width=1920,height=1080 '!' \
+                ${ENCODER} '!' \
+                h264parse ${H264PARSE_OPTS} '!' \
+                mpegtsmux name=mux '!' \
+                srtsink uri="${SRT_SINK_URI}" \
+              audiotestsrc wave=silence is-live=true '!' \
+                audio/x-raw,rate=48000,channels=2 '!' \
+                audioconvert '!' \
+                ${AUDIO_ENCODER} '!' \
+                mux.
+        else
+            # No HTML overlay, no audio
+            gst-launch-1.0 -v \
+              srtsrc uri="${current_src}" '!' \
+                tsdemux '!' h264parse '!' \
+                ${DECODER} '!' \
+                videoconvert '!' \
+                video/x-raw,width=1920,height=1080 '!' \
+                ${ENCODER} '!' \
+                h264parse ${H264PARSE_OPTS} '!' \
+                mpegtsmux '!' \
+                srtsink uri="${SRT_SINK_URI}"
+        fi
     fi
 }
 
