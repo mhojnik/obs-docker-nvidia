@@ -28,11 +28,23 @@ fi
 
 # Determine encoder (prefer GPU, fallback to CPU)
 if check_plugin nvh264enc; then
-    ENCODER="nvh264enc bitrate=6000 preset=low-latency-hq"
+    ENCODER="nvh264enc bitrate=6000 preset=low-latency-hq gop-size=30"
     echo "Using GPU encoder: nvh264enc"
 else
-    ENCODER="x264enc bitrate=6000 speed-preset=ultrafast tune=zerolatency"
+    ENCODER="x264enc bitrate=6000 speed-preset=ultrafast tune=zerolatency key-int-max=30"
     echo "Using CPU encoder: x264enc"
+fi
+
+# Determine audio encoder (prefer aacenc, fallback to avenc_aac)
+if check_plugin aacenc; then
+    AUDIO_ENCODER="aacenc bitrate=128000"
+    echo "Using aacenc for audio"
+elif check_plugin avenc_aac; then
+    AUDIO_ENCODER="avenc_aac bitrate=128000"
+    echo "Using avenc_aac for audio"
+else
+    AUDIO_ENCODER=""
+    echo "No AAC encoder available - skipping audio track"
 fi
 
 # Build and execute pipeline with retry logic for connection failures
@@ -44,35 +56,85 @@ run_pipeline() {
     if check_plugin wpesrc; then
         echo "Using wpesrc for HTML overlay"
         # Pipeline with webkit overlay
-        gst-launch-1.0 -v \
-          srtsrc uri=srt://172.18.0.4:6000/?mode=caller\&transtype=live\&streamid=a6128a3a-69cb-4da2-a654-1e5f7de4477f,mode:request '!' \
-            tsdemux '!' h264parse '!' \
-            $DECODER '!' \
-            videoconvert '!' \
-            video/x-raw,format=BGRA,width=1920,height=1080 '!' \
-            queue '!' comp.sink_0 \
-          wpesrc location=https://index.hr '!' \
-            video/x-raw,format=BGRA,width=1280,height=720,framerate=30/1 '!' \
-            queue '!' comp.sink_1 \
-          compositor name=comp sink_0::zorder=0 sink_1::zorder=1 \
-            background=black '!' \
-            video/x-raw,width=1920,height=1080 '!' \
-            videoconvert '!' \
-            $ENCODER '!' \
-            h264parse '!' mpegtsmux '!' \
-            srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish
+        if [ -n "$AUDIO_ENCODER" ]; then
+            # Pipeline with audio track
+            gst-launch-1.0 -v \
+              srtsrc uri=srt://172.18.0.4:6000/?mode=caller\&transtype=live\&streamid=a6128a3a-69cb-4da2-a654-1e5f7de4477f,mode:request '!' \
+                tsdemux '!' h264parse '!' \
+                $DECODER '!' \
+                videoconvert '!' \
+                video/x-raw,format=BGRA,width=1920,height=1080 '!' \
+                queue '!' comp.sink_0 \
+              wpesrc location=https://index.hr '!' \
+                video/x-raw,format=BGRA,width=1280,height=720,framerate=30/1 '!' \
+                queue '!' comp.sink_1 \
+              compositor name=comp sink_0::zorder=0 sink_1::zorder=1 \
+                background=black '!' \
+                video/x-raw,width=1920,height=1080 '!' \
+                videoconvert '!' \
+                $ENCODER '!' \
+                h264parse config-interval=-1 insert-vui=1 '!' \
+                mpegtsmux name=mux '!' \
+                srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish \
+              audiotestsrc wave=silence is-live=true '!' \
+                audio/x-raw,rate=48000,channels=2 '!' \
+                audioconvert '!' \
+                $AUDIO_ENCODER '!' \
+                mux.
+        else
+            # Pipeline without audio track
+            gst-launch-1.0 -v \
+              srtsrc uri=srt://172.18.0.4:6000/?mode=caller\&transtype=live\&streamid=a6128a3a-69cb-4da2-a654-1e5f7de4477f,mode:request '!' \
+                tsdemux '!' h264parse '!' \
+                $DECODER '!' \
+                videoconvert '!' \
+                video/x-raw,format=BGRA,width=1920,height=1080 '!' \
+                queue '!' comp.sink_0 \
+              wpesrc location=https://index.hr '!' \
+                video/x-raw,format=BGRA,width=1280,height=720,framerate=30/1 '!' \
+                queue '!' comp.sink_1 \
+              compositor name=comp sink_0::zorder=0 sink_1::zorder=1 \
+                background=black '!' \
+                video/x-raw,width=1920,height=1080 '!' \
+                videoconvert '!' \
+                $ENCODER '!' \
+                h264parse config-interval=-1 insert-vui=1 '!' \
+                mpegtsmux '!' \
+                srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish
+        fi
     else
         echo "wpesrc not available - skipping HTML overlay, using SRT pass-through"
         # Pipeline without webkit overlay (just pass through SRT stream)
-        gst-launch-1.0 -v \
-          srtsrc uri=srt://172.18.0.4:6000/?mode=caller\&transtype=live\&streamid=a6128a3a-69cb-4da2-a654-1e5f7de4477f,mode:request '!' \
-            tsdemux '!' h264parse '!' \
-            $DECODER '!' \
-            videoconvert '!' \
-            video/x-raw,width=1920,height=1080 '!' \
-            $ENCODER '!' \
-            h264parse '!' mpegtsmux '!' \
-            srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish
+        if [ -n "$AUDIO_ENCODER" ]; then
+            # Pipeline with audio track
+            gst-launch-1.0 -v \
+              srtsrc uri=srt://172.18.0.4:6000/?mode=caller\&transtype=live\&streamid=a6128a3a-69cb-4da2-a654-1e5f7de4477f,mode:request '!' \
+                tsdemux '!' h264parse '!' \
+                $DECODER '!' \
+                videoconvert '!' \
+                video/x-raw,width=1920,height=1080 '!' \
+                $ENCODER '!' \
+                h264parse config-interval=-1 insert-vui=1 '!' \
+                mpegtsmux name=mux '!' \
+                srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish \
+              audiotestsrc wave=silence is-live=true '!' \
+                audio/x-raw,rate=48000,channels=2 '!' \
+                audioconvert '!' \
+                $AUDIO_ENCODER '!' \
+                mux.
+        else
+            # Pipeline without audio track
+            gst-launch-1.0 -v \
+              srtsrc uri=srt://172.18.0.4:6000/?mode=caller\&transtype=live\&streamid=a6128a3a-69cb-4da2-a654-1e5f7de4477f,mode:request '!' \
+                tsdemux '!' h264parse '!' \
+                $DECODER '!' \
+                videoconvert '!' \
+                video/x-raw,width=1920,height=1080 '!' \
+                $ENCODER '!' \
+                h264parse config-interval=-1 insert-vui=1 '!' \
+                mpegtsmux '!' \
+                srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish
+        fi
     fi
 }
 
