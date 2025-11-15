@@ -38,9 +38,15 @@ check_property() {
 
 # Determine encoder (prefer GPU, fallback to CPU)
 # Based on GStreamer docs: nvh264enc has bitrate, preset, bframes, cabac, aud, etc.
-# gop-size may not be available - check at runtime
+# NVIDIA encoders may have insert-sps-pps property to force parameter set insertion
 if check_plugin nvh264enc; then
     ENCODER="nvh264enc bitrate=6000 preset=low-latency-hq"
+    # Check for insert-sps-pps property (NVIDIA encoders support this)
+    if check_property nvh264enc insert-sps-pps; then
+        ENCODER="$ENCODER insert-sps-pps=1"
+        echo "nvh264enc: using insert-sps-pps=1 to force SPS/PPS insertion"
+    fi
+    # Set keyframe interval (gop-size or keyframe-interval)
     if check_property nvh264enc gop-size; then
         ENCODER="$ENCODER gop-size=30"
     elif check_property nvh264enc keyframe-interval; then
@@ -54,12 +60,12 @@ else
 fi
 
 # Determine h264parse options
-# Based on GStreamer docs: config-interval=-1 sends SPS/PPS with every IDR frame
-# output-format can be byte-stream or avc (not output-stream-format)
+# According to GStreamer docs: config-interval=-1 inserts SPS/PPS before every IDR frame
+# config-interval=0 DISABLES insertion (default), so we must use -1
 H264PARSE_OPTS=""
 if check_property h264parse config-interval; then
     H264PARSE_OPTS="config-interval=-1"
-    echo "h264parse: using config-interval=-1 to insert SPS/PPS with every IDR frame"
+    echo "h264parse: using config-interval=-1 to insert SPS/PPS with every IDR frame (per GStreamer docs)"
 else
     # Fallback: check if property exists with different matching
     if gst-inspect-1.0 h264parse 2>/dev/null | grep -q "config-interval"; then
@@ -69,6 +75,7 @@ else
         echo "WARNING: h264parse config-interval property not found - SPS/PPS may not be inserted"
     fi
 fi
+# Ensure byte-stream format for compatibility
 if check_property h264parse output-format; then
     H264PARSE_OPTS="$H264PARSE_OPTS output-format=byte-stream"
 fi
