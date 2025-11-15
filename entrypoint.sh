@@ -73,7 +73,7 @@ run_pipeline() {
                 video/x-raw,width=1920,height=1080 '!' \
                 videoconvert '!' \
                 $ENCODER '!' \
-                h264parse config-interval=-1 insert-vui=1 '!' \
+                h264parse config-interval=-1 '!' \
                 mpegtsmux name=mux '!' \
                 srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish \
               audiotestsrc wave=silence is-live=true '!' \
@@ -98,7 +98,7 @@ run_pipeline() {
                 video/x-raw,width=1920,height=1080 '!' \
                 videoconvert '!' \
                 $ENCODER '!' \
-                h264parse config-interval=-1 insert-vui=1 '!' \
+                h264parse config-interval=-1 '!' \
                 mpegtsmux '!' \
                 srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish
         fi
@@ -114,7 +114,7 @@ run_pipeline() {
                 videoconvert '!' \
                 video/x-raw,width=1920,height=1080 '!' \
                 $ENCODER '!' \
-                h264parse config-interval=-1 insert-vui=1 '!' \
+                h264parse config-interval=-1 '!' \
                 mpegtsmux name=mux '!' \
                 srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish \
               audiotestsrc wave=silence is-live=true '!' \
@@ -131,7 +131,7 @@ run_pipeline() {
                 videoconvert '!' \
                 video/x-raw,width=1920,height=1080 '!' \
                 $ENCODER '!' \
-                h264parse config-interval=-1 insert-vui=1 '!' \
+                h264parse config-interval=-1 '!' \
                 mpegtsmux '!' \
                 srtsink uri=srt://172.18.0.4:6000?mode=caller\&transtype=live\&streamid=eeef12c8-6c83-42bf-b08f-e2e17b7c9f09.stream,mode:publish
         fi
