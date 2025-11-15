@@ -67,6 +67,13 @@ def build_pipeline():
         srtsrc.set_property("uri", src_uri)
         h264parse.set_property("config-interval", -1)
         
+        # Configure queue to be more resilient (leaky downstream, larger buffer)
+        try:
+            queue.set_property("max-size-time", 2000000000)  # 2 seconds in nanoseconds
+            queue.set_property("leaky", "downstream")  # Drop old buffers if downstream is slow
+        except Exception:
+            pass  # Properties may not be available in all GStreamer versions
+        
         for elem in [srtsrc, tsdemux, h264parse, decoder, videoconvert, queue]:
             pipeline.add(elem)
         
@@ -84,7 +91,7 @@ def build_pipeline():
         
         sink_pad = selector.request_pad_simple("sink_%u")
         queue.get_static_pad("src").link(sink_pad)
-        source_elements.append({'pad': sink_pad})
+        source_elements.append({'pad': sink_pad, 'srtsrc': srtsrc, 'queue': queue})
     
     # Encoding chain
     encoder = Gst.ElementFactory.make("nvh264enc", "encoder")
@@ -241,7 +248,35 @@ def build_pipeline():
     # Link muxer to sink
     mpegtsmux.get_static_pad("src").link(srtsink.get_static_pad("sink"))
     
-    return pipeline, selector, source_elements
+    return pipeline, selector, source_elements, srtsink
+
+def restart_source(source_elem):
+    """Restart a stopped SRT source"""
+    srtsrc = source_elem.get('srtsrc')
+    if srtsrc:
+        try:
+            state_ret = srtsrc.get_state(Gst.CLOCK_TIME_NONE)
+            if state_ret[0] == Gst.StateChangeReturn.SUCCESS:
+                state = state_ret[1]
+                # Restart if not already playing
+                if state != Gst.State.PLAYING:
+                    print(f"Restarting source {source_elem.get('index', 'unknown')} (current state: {state.value_nick})", flush=True)
+                    srtsrc.set_state(Gst.State.NULL)  # Reset first
+                    srtsrc.set_state(Gst.State.PLAYING)
+                    return True
+        except Exception as e:
+            print(f"Failed to restart source {source_elem.get('index', 'unknown')}: {e}", flush=True)
+    return False
+
+def restart_all_sources(source_elements):
+    """Restart all stopped sources"""
+    restarted = 0
+    for i, source_elem in enumerate(source_elements):
+        source_elem['index'] = i + 1
+        if restart_source(source_elem):
+            restarted += 1
+    if restarted > 0:
+        print(f"Restarted {restarted} source(s)", flush=True)
 
 def switch_source(selector, source_elements, next_index):
     """Switch to next source"""
@@ -259,10 +294,13 @@ def main():
         print("ERROR: Failed to build pipeline", flush=True)
         sys.exit(1)
     
-    pipeline, selector, source_elements = result
+    pipeline, selector, source_elements, srtsink = result
     
     # Set initial source
     selector.set_property("active-pad", source_elements[0]['pad'])
+    
+    # Track sink connection state
+    sink_connected = [False]  # Use list to allow modification in nested functions
     
     # Bus message handling
     bus = pipeline.get_bus()
@@ -280,6 +318,18 @@ def main():
             # holding the SRT connection. The new container will retry until the old one stops and frees it.
             if 'srtsink' in element_name.lower() or 'srt' in element_name.lower():
                 debug_lower = debug.lower() if debug else ""
+                # Check for cascading data stream errors first (these are non-fatal)
+                is_data_stream_error = (
+                    'internal data stream error' in error_msg or 'streaming stopped' in debug_lower
+                )
+                if is_data_stream_error:
+                    print(f"⚠ Data stream error from {element_name}: {err.message}", flush=True)
+                    if debug:
+                        print(f"Debug info: {debug}", flush=True)
+                    print("This may be caused by downstream SRT connection issues. Pipeline will continue...", flush=True)
+                    # Don't quit - these are often transient and resolve when SRT connects
+                    return True
+                
                 # Check both error message and debug info for connection-related issues
                 # These errors are expected during rolling updates when the old container holds the connection
                 is_connection_error = (
@@ -333,12 +383,29 @@ def main():
             # Log SRT warnings but don't quit
             if 'srt' in element_name.lower():
                 print(f"⚠ SRT warning from {element_name}: {warn.message}", flush=True)
+        elif message.type == Gst.MessageType.STATE_CHANGED:
+            if message.src == srtsink:
+                old_state, new_state, pending_state = message.parse_state_changed()
+                # Detect when sink transitions to PLAYING (connected)
+                if new_state == Gst.State.PLAYING and not sink_connected[0]:
+                    sink_connected[0] = True
+                    print("✓ SRT sink connected - restarting sources...", flush=True)
+                    restart_all_sources(source_elements)
+                elif new_state != Gst.State.PLAYING and sink_connected[0]:
+                    sink_connected[0] = False
+                    print("⚠ SRT sink disconnected", flush=True)
         elif message.type == Gst.MessageType.INFO:
             info, debug = message.parse_info()
             element_name = message.src.get_name() if message.src else "unknown"
             # Log SRT connection info
             if 'srt' in element_name.lower() and ('connect' in info.message.lower() or 'connection' in info.message.lower()):
                 print(f"ℹ SRT info from {element_name}: {info.message}", flush=True)
+                # If sink connects, restart sources
+                if 'srtsink' in element_name.lower() and 'connect' in info.message.lower():
+                    if not sink_connected[0]:
+                        sink_connected[0] = True
+                        print("✓ SRT sink connected - restarting sources...", flush=True)
+                        restart_all_sources(source_elements)
         return True
     
     bus.connect("message", on_message)
@@ -354,6 +421,15 @@ def main():
         return True
     
     GLib.timeout_add_seconds(SOURCE_SWITCH_INTERVAL, switch_timer)
+    
+    # Periodic recovery timer - check and restart stopped sources every 10 seconds
+    # Only runs when sink is connected to avoid unnecessary checks
+    def recovery_timer():
+        if sink_connected[0]:
+            restart_all_sources(source_elements)
+        return True  # Keep timer running to check when sink connects
+    
+    GLib.timeout_add_seconds(10, recovery_timer)
     
     try:
         loop.run()
