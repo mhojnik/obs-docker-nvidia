@@ -17,6 +17,6 @@ fi
 
 pulseaudio --start
 
-obs &
+obs --disable-preview &
 
 wait
