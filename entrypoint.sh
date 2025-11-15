@@ -36,9 +36,9 @@ else
 fi
 
 # Build and execute pipeline with retry logic for connection failures
-# Retry up to 5 times with exponential backoff
-MAX_RETRIES=5
+# Retry indefinitely with exponential backoff (capped at 30s)
 RETRY_DELAY=2
+MAX_DELAY=30
 
 run_pipeline() {
     if check_plugin wpesrc; then
@@ -76,14 +76,18 @@ run_pipeline() {
     fi
 }
 
-# Run pipeline with retry logic
+# Run pipeline with retry logic - retry indefinitely to keep container healthy
 RETRY_COUNT=0
 CURRENT_DELAY=$RETRY_DELAY
-while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+while true; do
     if [ $RETRY_COUNT -gt 0 ]; then
-        echo "Pipeline failed, retrying in ${CURRENT_DELAY}s (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)..."
+        echo "Pipeline failed, retrying in ${CURRENT_DELAY}s (attempt $((RETRY_COUNT + 1)))..."
         sleep $CURRENT_DELAY
-        CURRENT_DELAY=$((CURRENT_DELAY * 2))  # Exponential backoff
+        # Exponential backoff, capped at MAX_DELAY
+        CURRENT_DELAY=$((CURRENT_DELAY * 2))
+        if [ $CURRENT_DELAY -gt $MAX_DELAY ]; then
+            CURRENT_DELAY=$MAX_DELAY
+        fi
     fi
     
     run_pipeline
@@ -96,6 +100,3 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     
     RETRY_COUNT=$((RETRY_COUNT + 1))
 done
-
-echo "Pipeline failed after $MAX_RETRIES attempts, exiting"
-exit 1
