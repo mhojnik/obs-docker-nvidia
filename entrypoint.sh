@@ -45,6 +45,9 @@ if check_plugin nvh264enc; then
     if check_property nvh264enc repeat-sequence-header; then
         ENCODER="$ENCODER repeat-sequence-header=true"
         echo "nvh264enc: using repeat-sequence-header=true to insert SPS/PPS before each IDR frame"
+    else
+        echo "WARNING: nvh264enc repeat-sequence-header property not found - checking available properties..."
+        gst-inspect-1.0 nvh264enc 2>/dev/null | grep -E "(repeat|sequence|header|sps|pps)" | head -5 || true
     fi
     # Set keyframe interval (gop-size or keyframe-interval)
     if check_property nvh264enc gop-size; then
@@ -52,7 +55,7 @@ if check_plugin nvh264enc; then
     elif check_property nvh264enc keyframe-interval; then
         ENCODER="$ENCODER keyframe-interval=30"
     fi
-    echo "Using GPU encoder: nvh264enc"
+    echo "Using GPU encoder: nvh264enc with options: $ENCODER"
 else
     # x264enc: key-int-max is documented property for keyframe interval
     ENCODER="x264enc bitrate=6000 speed-preset=ultrafast tune=zerolatency key-int-max=30"
@@ -72,13 +75,15 @@ else
         H264PARSE_OPTS="config-interval=-1"
         echo "h264parse: using config-interval=-1 (fallback detection)"
     else
-        echo "WARNING: h264parse config-interval property not found - SPS/PPS may not be inserted"
+        echo "WARNING: h264parse config-interval property not found - checking available properties..."
+        gst-inspect-1.0 h264parse 2>/dev/null | grep -E "(config|interval|sps|pps)" | head -5 || true
     fi
 fi
 # Ensure byte-stream format for compatibility
 if check_property h264parse output-format; then
     H264PARSE_OPTS="$H264PARSE_OPTS output-format=byte-stream"
 fi
+echo "h264parse options: ${H264PARSE_OPTS:-none}"
 
 # Determine audio encoder (prefer aacenc, fallback to avenc_aac)
 if check_plugin aacenc; then
