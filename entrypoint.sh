@@ -39,8 +39,7 @@ fi
 
 # h264parse configuration for SPS/PPS insertion
 # config-interval=-1 inserts SPS/PPS before every IDR frame
-# output-format=byte-stream is required for mpegtsmux compatibility
-H264PARSE_OPTS="config-interval=-1 output-format=byte-stream"
+H264PARSE_OPTS="config-interval=-1"
 echo "h264parse: $H264PARSE_OPTS"
 
 # Determine audio encoder (prefer aacenc, fallback to avenc_aac)
