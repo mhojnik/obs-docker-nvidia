@@ -73,13 +73,17 @@ RUN apt-get update && apt-get install -y \
 RUN git clone https://gitlab.freedesktop.org/gstreamer/gst-plugins-bad.git /tmp/gst-plugins-bad && \
     cd /tmp/gst-plugins-bad && \
     GST_VERSION=$(pkg-config --modversion gstreamer-1.0) && \
+    echo "GStreamer version: ${GST_VERSION}" && \
     (git checkout ${GST_VERSION} 2>/dev/null || \
-     git checkout $(git tag | grep "^1\.20\." | sort -V | tail -1)) && \
+     git checkout $(git tag | grep "^1\.20\." | sort -V | tail -1) || \
+     git checkout 1.20.3) && \
+    echo "Checked out: $(git describe --tags)" && \
     meson setup build \
         -Dnvcodec=enabled \
         -Ddefault_library=shared \
         -Dprefix=/usr && \
-    meson compile -C build && \
+    echo "=== Building nvcodec ===" && \
+    meson compile -C build 2>&1 | grep -i nvcodec || echo "Build output above" && \
     meson install -C build && \
     ldconfig && \
     rm -rf /tmp/gst-plugins-bad
@@ -103,7 +107,11 @@ RUN gst-launch-1.0 --version && \
     echo "=== Checking wpe plugin dependencies ===" && \
     (ldd /usr/lib/x86_64-linux-gnu/gstreamer-1.0/libgstwpe.so 2>&1 | grep "not found" || echo "All dependencies satisfied") && \
     echo "=== Listing all nvcodec elements ===" && \
-    (gst-inspect-1.0 nvcodec 2>&1 | head -50 || echo "nvcodec plugin not loadable") && \
+    (gst-inspect-1.0 nvcodec 2>&1 || echo "nvcodec plugin not loadable") && \
+    echo "=== Checking for nvcodec elements directly ===" && \
+    (gst-inspect-1.0 | grep -i nv || echo "No nvcodec elements found") && \
+    echo "=== Checking nvcodec plugin file ===" && \
+    (strings /usr/lib/x86_64-linux-gnu/gstreamer-1.0/libgstnvcodec.so | grep -E "(nvh264|nvdec|nvenc)" | head -10 || echo "No nvcodec symbols found") && \
     echo "=== Listing all wpe elements ===" && \
     (gst-inspect-1.0 wpe 2>&1 | head -30 || echo "wpe plugin not loadable") && \
     echo "=== Checking ALL required pipeline elements ===" && \
