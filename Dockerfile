@@ -19,11 +19,35 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------
-# Install GStreamer + Plugins (Latest Version)
+# Install NVIDIA Video Codec SDK headers (required for hardware acceleration)
 # -----------------------------
-# Add GStreamer PPA for latest stable releases
-RUN add-apt-repository -y ppa:gstreamer-developers/ppa && \
-    apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    meson \
+    ninja-build \
+    pkg-config \
+    git \
+    && rm -rf /var/lib/apt/lists/* && \
+    (apt-get update && apt-get install -y nv-codec-headers 2>/dev/null || \
+     (git clone https://github.com/FFmpeg/nv-codec-headers.git /tmp/nv-codec-headers && \
+      cd /tmp/nv-codec-headers && \
+      make && make install && \
+      rm -rf /tmp/nv-codec-headers)) && \
+    rm -rf /var/lib/apt/lists/*
+
+# -----------------------------
+# Install WebKitGTK FIRST (required for webkitwebsrc plugin)
+# WebKitGTK 2.46+ uses Skia and GPU acceleration by default
+# -----------------------------
+RUN apt-get update && apt-get install -y \
+    libwebkit2gtk-4.0-37 \
+    libwebkit2gtk-4.0-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# -----------------------------
+# Install GStreamer + Plugins (ALL packages first)
+# -----------------------------
+RUN apt-get update && apt-get install -y \
     gstreamer1.0-tools \
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \
@@ -33,22 +57,71 @@ RUN add-apt-repository -y ppa:gstreamer-developers/ppa && \
     gstreamer1.0-nice \
     gstreamer1.0-gl \
     gstreamer1.0-x \
+    gstreamer1.0-wpe \
     libgstrtspserver-1.0-dev \
+    libgstreamer1.0-dev \
+    libgstreamer-plugins-base1.0-dev \
+    libglib2.0-dev \
+    liborc-0.4-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Verify GStreamer version (should be 1.26.x or later)
+# -----------------------------
+# Build gst-plugins-bad from source with nvcodec support
+# This enables nvh264dec and nvh264enc plugins for hardware acceleration
+# We build ONLY the nvcodec plugin, keeping the rest from Ubuntu packages
+# Use -Dauto_features=disabled to only build nvcodec, then enable it
+# -----------------------------
+RUN git clone https://gitlab.freedesktop.org/gstreamer/gst-plugins-bad.git /tmp/gst-plugins-bad && \
+    cd /tmp/gst-plugins-bad && \
+    GST_VERSION=$(pkg-config --modversion gstreamer-1.0) && \
+    (git checkout ${GST_VERSION} 2>/dev/null || \
+     git checkout $(git tag | grep "^1\.20\." | sort -V | tail -1)) && \
+    meson setup build \
+        -Dauto_features=disabled \
+        -Dnvcodec=enabled \
+        -Ddefault_library=shared \
+        -Dprefix=/usr && \
+    meson compile -C build && \
+    meson install -C build && \
+    ldconfig && \
+    rm -rf /tmp/gst-plugins-bad
+
+# Rebuild GStreamer registry to ensure all plugins are recognized
+# Force a complete registry rebuild
+RUN rm -rf /root/.cache/gstreamer-1.0/registry*.bin 2>/dev/null || true && \
+    rm -rf ~/.cache/gstreamer-1.0/registry*.bin 2>/dev/null || true && \
+    GST_PLUGIN_SYSTEM_PATH=/usr/lib/x86_64-linux-gnu/gstreamer-1.0 gst-inspect-1.0 >/dev/null 2>&1 && \
+    gst-inspect-1.0 >/dev/null 2>&1 || true
+
+# Verify GStreamer installation and check ALL required plugins
 RUN gst-launch-1.0 --version && \
-    echo "GStreamer version check complete"
-
-# -----------------------------
-# Install WebKitGTK (for HTML overlay)
-# This provides webkitwebsrc
-# WebKitGTK 2.46+ uses Skia and GPU acceleration by default
-# -----------------------------
-RUN apt-get update && apt-get install -y \
-    libwebkit2gtk-4.0-37 \
-    libwebkit2gtk-4.0-dev \
-    && rm -rf /var/lib/apt/lists/*
+    echo "GStreamer installation verified" && \
+    echo "=== Checking installed packages ===" && \
+    dpkg -l | grep gstreamer | grep -E "(good|bad|wpe)" && \
+    echo "=== Checking plugin directory ===" && \
+    ls -la /usr/lib/x86_64-linux-gnu/gstreamer-1.0/ | grep -E "(tsdemux|webkit|nvcodec|wpe)" || echo "Plugins not found in standard location" && \
+    echo "=== Checking nvcodec plugin dependencies ===" && \
+    (ldd /usr/lib/x86_64-linux-gnu/gstreamer-1.0/libgstnvcodec.so 2>&1 | grep "not found" || echo "All dependencies satisfied") && \
+    echo "=== Checking wpe plugin dependencies ===" && \
+    (ldd /usr/lib/x86_64-linux-gnu/gstreamer-1.0/libgstwpe.so 2>&1 | grep "not found" || echo "All dependencies satisfied") && \
+    echo "=== Listing all nvcodec elements ===" && \
+    (gst-inspect-1.0 nvcodec 2>&1 | head -50 || echo "nvcodec plugin not loadable") && \
+    echo "=== Listing all wpe elements ===" && \
+    (gst-inspect-1.0 wpe 2>&1 | head -30 || echo "wpe plugin not loadable") && \
+    echo "=== Checking ALL required pipeline elements ===" && \
+    (gst-inspect-1.0 srtsrc >/dev/null 2>&1 && echo "✓ srtsrc: available" || echo "✗ srtsrc: NOT available") && \
+    (gst-inspect-1.0 tsdemux >/dev/null 2>&1 && echo "✓ tsdemux: available" || echo "✗ tsdemux: NOT available") && \
+    (gst-inspect-1.0 h264parse >/dev/null 2>&1 && echo "✓ h264parse: available" || echo "✗ h264parse: NOT available") && \
+    (gst-inspect-1.0 avdec_h264 >/dev/null 2>&1 && echo "✓ avdec_h264: available (software decoder)" || echo "✗ avdec_h264: NOT available") && \
+    (gst-inspect-1.0 nvh264dec >/dev/null 2>&1 && echo "✓ nvh264dec: available (GPU decoder)" || echo "✗ nvh264dec: NOT available") && \
+    (gst-inspect-1.0 nvh264enc >/dev/null 2>&1 && echo "✓ nvh264enc: available (GPU encoder)" || echo "✗ nvh264enc: NOT available") && \
+    (gst-inspect-1.0 x264enc >/dev/null 2>&1 && echo "✓ x264enc: available (software encoder fallback)" || echo "✗ x264enc: NOT available") && \
+    (gst-inspect-1.0 webkitwebsrc >/dev/null 2>&1 && echo "✓ webkitwebsrc: available" || echo "✗ webkitwebsrc: NOT available") && \
+    (gst-inspect-1.0 compositor >/dev/null 2>&1 && echo "✓ compositor: available" || echo "✗ compositor: NOT available") && \
+    (gst-inspect-1.0 videoconvert >/dev/null 2>&1 && echo "✓ videoconvert: available" || echo "✗ videoconvert: NOT available") && \
+    (gst-inspect-1.0 mpegtsmux >/dev/null 2>&1 && echo "✓ mpegtsmux: available" || echo "✗ mpegtsmux: NOT available") && \
+    (gst-inspect-1.0 srtsink >/dev/null 2>&1 && echo "✓ srtsink: available" || echo "✗ srtsink: NOT available") && \
+    echo "=== Plugin availability check complete ==="
 
 # -----------------------------
 # Set environment variables for GPU acceleration
